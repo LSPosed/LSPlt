@@ -152,15 +152,14 @@ Elf::Elf(uintptr_t base_addr) : base_addr_(base_addr) {
         case DT_HASH: {
             // ignore DT_HASH when ELF contains DT_GNU_HASH hash table
             if (bloom_) continue;
-            auto *raw = reinterpret_cast<ElfW(Word) *>(bias_addr_, dynamic->d_un.d_ptr);
+            auto *raw = reinterpret_cast<ElfW(Word) *>(bias_addr_ + dynamic->d_un.d_ptr);
             bucket_count_ = raw[0];
-            chain_count_ = raw[1];
             bucket_ = raw + 2;
             chain_ = bucket_ + bucket_count_;
             break;
         }
         case DT_GNU_HASH: {
-            auto *raw = reinterpret_cast<ElfW(Word) *>(bias_addr_, dynamic->d_un.d_ptr);
+            auto *raw = reinterpret_cast<ElfW(Word) *>(bias_addr_ + dynamic->d_un.d_ptr);
             bucket_count_ = raw[0];
             sym_offset_ = raw[1];
             bloom_size_ = raw[2];

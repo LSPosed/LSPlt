@@ -29,7 +29,6 @@ class Elf {
     uint32_t *bucket_ = nullptr;
     uint32_t bucket_count_ = 0;
     uint32_t *chain_ = nullptr;
-    uint32_t chain_count_ = 0;  // invalid for GNU hash
 
     // append for GNU hash
     uint32_t sym_offset_ = 0;
