@@ -20,18 +20,14 @@ struct RegisterInfo {
     void **backup;
 };
 
-struct MapInfo {
-    std::string path;
-    ino_t inode;
-    uintptr_t start;
-    uintptr_t end;
+struct HookMapInfo : public lsplt::MapInfo {
     std::map<uintptr_t, uintptr_t> hooks;
     uintptr_t backup;
     std::unique_ptr<Elf> elf;
     [[nodiscard]] bool Match(const RegisterInfo &info) const { return info.inode == inode; }
 };
 
-class MapInfos : public std::map<uintptr_t, MapInfo, std::greater<>> {
+class HookMapInfos : public std::map<uintptr_t, MapInfo, std::greater<>> {
 public:
     static MapInfos ScanMapInfo() {
         constexpr static auto kPermLength = 5;
@@ -206,6 +202,46 @@ MapInfos map_info;
 }  // namespace
 
 namespace lsplt {
+
+std::vector<MapInfo> MapInfo::Scan() {
+    constexpr static auto kPermLength = 5;
+    constexpr static auto kMapEntry = 5;
+    std::vector<MapInfo> info;
+    auto maps = std::unique_ptr<FILE, decltype(&fclose)>{fopen("/proc/self/maps", "r"), &fclose};
+    if (maps) {
+        char *line = nullptr;
+        size_t len = 0;
+        ssize_t read;
+        while ((read = getline(&line, &len, maps.get())) != -1) {
+            uintptr_t start = 0;
+            uintptr_t end = 0;
+            uintptr_t off = 0;
+            ino_t inode = 0;
+            std::array<char, kPermLength> perm{'\0'};
+            int path_off;
+            if (sscanf(line, "%" PRIxPTR "-%" PRIxPTR " %4s %" PRIxPTR " %*x:%*x %lu %n%*s", &start,
+                       &end, perm.data(), &off, &inode, &path_off) != kMapEntry) {
+                continue;
+            }
+            // we basically only care about r--p entry
+            // and for offset == 0 it's an ELF header
+            // and for offset != 0 it's what we hook
+            // if (perm[0] != 'r') continue;
+            if (perm[3] != 'p') continue;
+            if (perm[2] == 'x') continue;
+            // if (off != 0) continue;
+            while (path_off < read && isspace(line[path_off])) path_off++;
+            if (path_off >= read) continue;
+            std::string path{line + path_off};
+            if (path.empty()) continue;
+            if (path[0] == '[') continue;
+
+            info.emplace(start, MapInfo{std::move(path), inode, start, end, {}, 0, nullptr});
+        }
+        free(line);
+    }
+    return info;
+}
 [[maybe_unused]] bool RegisterHook(ino_t ino, std::string_view symbol, void *callback,
                                    void **backup) {
     if (symbol.empty() || !callback) return false;

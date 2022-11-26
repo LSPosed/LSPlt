@@ -2,10 +2,24 @@
 
 #include <sys/types.h>
 
+#include <string>
 #include <string_view>
 
 namespace lsplt {
 inline namespace v1 {
+
+struct MapInfo {
+    uintptr_t start;
+    uintptr_t end;
+    uint8_t perm;
+    bool is_private;
+    dev_t dev;
+    ino_t inode;
+    std::string path;
+
+    static std::vector<MapInfo> Scan();
+};
+
 [[maybe_unused, gnu::visibility("default")]] bool RegisterHook(ino_t ino, std::string_view symbol,
                                                                void *callback, void **backup);
 
