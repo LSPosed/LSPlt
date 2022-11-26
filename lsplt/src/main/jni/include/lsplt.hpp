@@ -17,7 +17,7 @@ struct MapInfo {
     ino_t inode;
     std::string path;
 
-    static std::vector<MapInfo> Scan();
+    [[maybe_unused, gnu::visibility("default")]] static std::vector<MapInfo> Scan();
 };
 
 [[maybe_unused, gnu::visibility("default")]] bool RegisterHook(ino_t ino, std::string_view symbol,

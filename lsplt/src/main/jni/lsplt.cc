@@ -2,6 +2,7 @@
 
 #include <regex.h>
 #include <sys/mman.h>
+#include <sys/sysmacros.h>
 
 #include <array>
 #include <cinttypes>
@@ -20,52 +21,29 @@ struct RegisterInfo {
     void **backup;
 };
 
-struct HookMapInfo : public lsplt::MapInfo {
+struct HookInfo : public lsplt::MapInfo {
     std::map<uintptr_t, uintptr_t> hooks;
     uintptr_t backup;
     std::unique_ptr<Elf> elf;
     [[nodiscard]] bool Match(const RegisterInfo &info) const { return info.inode == inode; }
 };
 
-class HookMapInfos : public std::map<uintptr_t, MapInfo, std::greater<>> {
+class HookInfos : public std::map<uintptr_t, HookInfo, std::greater<>> {
 public:
-    static MapInfos ScanMapInfo() {
-        constexpr static auto kPermLength = 5;
-        constexpr static auto kMapEntry = 5;
-        MapInfos info;
-        auto maps =
-            std::unique_ptr<FILE, decltype(&fclose)>{fopen("/proc/self/maps", "r"), &fclose};
-        if (maps) {
-            char *line = nullptr;
-            size_t len = 0;
-            ssize_t read;
-            while ((read = getline(&line, &len, maps.get())) != -1) {
-                uintptr_t start = 0;
-                uintptr_t end = 0;
-                uintptr_t off = 0;
-                ino_t inode = 0;
-                std::array<char, kPermLength> perm{'\0'};
-                int path_off;
-                if (sscanf(line, "%" PRIxPTR "-%" PRIxPTR " %4s %" PRIxPTR " %*x:%*x %lu %n%*s",
-                           &start, &end, perm.data(), &off, &inode, &path_off) != kMapEntry) {
-                    continue;
-                }
-                // we basically only care about r--p entry
-                // and for offset == 0 it's an ELF header
-                // and for offset != 0 it's what we hook
-                // if (perm[0] != 'r') continue;
-                if (perm[3] != 'p') continue;
-                if (perm[2] == 'x') continue;
-                // if (off != 0) continue;
-                while (path_off < read && isspace(line[path_off])) path_off++;
-                if (path_off >= read) continue;
-                std::string path{line + path_off};
-                if (path.empty()) continue;
-                if (path[0] == '[') continue;
-
-                info.emplace(start, MapInfo{std::move(path), inode, start, end, {}, 0, nullptr});
-            }
-            free(line);
+    static auto ScanHookInfo() {
+        HookInfos info;
+        for (auto &map : lsplt::MapInfo::Scan()) {
+            // we basically only care about r--p entry
+            // and for offset == 0 it's an ELF header
+            // and for offset != 0 it's what we hook
+            // if (perm[0] != 'r') continue;
+            if (!map.is_private) continue;
+            if (map.perm & PROT_EXEC) continue;
+            // if (off != 0) continue;
+            if (map.path.empty()) continue;
+            if (map.path[0] == '[') continue;
+            auto start = map.start;
+            info.emplace(start, HookInfo{{std::move(map)}, {}, 0, nullptr});
         }
         return info;
     }
@@ -89,7 +67,7 @@ public:
         }
     }
 
-    void Merge(MapInfos &old) {
+    void Merge(HookInfos &old) {
         // merge with old map info
         for (auto &info : old) {
             if (info.second.backup) {
@@ -198,14 +176,13 @@ public:
 
 std::mutex hook_mutex;
 std::list<RegisterInfo> register_info;
-MapInfos map_info;
+HookInfos hook_info;
 }  // namespace
 
 namespace lsplt {
-
-std::vector<MapInfo> MapInfo::Scan() {
+[[maybe_unused]] std::vector<MapInfo> MapInfo::Scan() {
     constexpr static auto kPermLength = 5;
-    constexpr static auto kMapEntry = 5;
+    constexpr static auto kMapEntry = 7;
     std::vector<MapInfo> info;
     auto maps = std::unique_ptr<FILE, decltype(&fclose)>{fopen("/proc/self/maps", "r"), &fclose};
     if (maps) {
@@ -217,26 +194,22 @@ std::vector<MapInfo> MapInfo::Scan() {
             uintptr_t end = 0;
             uintptr_t off = 0;
             ino_t inode = 0;
+            unsigned int dev_major = 0;
+            unsigned int dev_minor = 0;
             std::array<char, kPermLength> perm{'\0'};
             int path_off;
-            if (sscanf(line, "%" PRIxPTR "-%" PRIxPTR " %4s %" PRIxPTR " %*x:%*x %lu %n%*s", &start,
-                       &end, perm.data(), &off, &inode, &path_off) != kMapEntry) {
+            if (sscanf(line, "%" PRIxPTR "-%" PRIxPTR " %4s %" PRIxPTR " %x:%x %lu %n%*s", &start,
+                       &end, perm.data(), &off, &dev_major, &dev_minor, &inode,
+                       &path_off) != kMapEntry) {
                 continue;
             }
-            // we basically only care about r--p entry
-            // and for offset == 0 it's an ELF header
-            // and for offset != 0 it's what we hook
-            // if (perm[0] != 'r') continue;
-            if (perm[3] != 'p') continue;
-            if (perm[2] == 'x') continue;
-            // if (off != 0) continue;
             while (path_off < read && isspace(line[path_off])) path_off++;
-            if (path_off >= read) continue;
-            std::string path{line + path_off};
-            if (path.empty()) continue;
-            if (path[0] == '[') continue;
-
-            info.emplace(start, MapInfo{std::move(path), inode, start, end, {}, 0, nullptr});
+            auto &ref = info.emplace_back(MapInfo{start, end, 0, perm[3] == 'p',
+                                                  static_cast<dev_t>(makedev(dev_major, dev_minor)),
+                                                  inode, line + path_off});
+            if (perm[0] == 'r') ref.perm |= PROT_READ;
+            if (perm[1] == 'w') ref.perm |= PROT_WRITE;
+            if (perm[2] == 'x') ref.perm |= PROT_EXEC;
         }
         free(line);
     }
@@ -256,20 +229,20 @@ std::vector<MapInfo> MapInfo::Scan() {
     std::unique_lock lock(hook_mutex);
     if (register_info.empty()) return true;
 
-    auto new_map_info = MapInfos::ScanMapInfo();
-    if (new_map_info.empty()) return false;
+    auto new_hook_info = HookInfos::ScanHookInfo();
+    if (new_hook_info.empty()) return false;
 
-    new_map_info.Filter(register_info);
+    new_hook_info.Filter(register_info);
 
-    new_map_info.Merge(map_info);
+    new_hook_info.Merge(hook_info);
     // update to new map info
-    map_info = std::move(new_map_info);
+    hook_info = std::move(new_hook_info);
 
-    return map_info.DoHook(register_info);
+    return hook_info.DoHook(register_info);
 }
 
 [[gnu::destructor]] [[maybe_unused]] bool InvalidateBackup() {
     std::unique_lock lock(hook_mutex);
-    return map_info.InvalidateBackup();
+    return hook_info.InvalidateBackup();
 }
 }  // namespace lsplt
