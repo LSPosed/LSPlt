@@ -13,20 +13,12 @@
 #include "elf_util.hpp"
 
 namespace {
-struct BaseInfo {
-    regex_t regex;
+struct RegisterInfo {
     ino_t inode;
     std::string symbol;
-    ~BaseInfo() { regfree(&regex); }
-};
-
-struct RegisterInfo : BaseInfo {
     void *callback;
     void **backup;
-    ~RegisterInfo() { regfree(&regex); }
 };
-
-struct IgnoreInfo : BaseInfo {};
 
 struct MapInfo {
     std::string path;
@@ -36,10 +28,7 @@ struct MapInfo {
     std::map<uintptr_t, uintptr_t> hooks;
     uintptr_t backup;
     std::unique_ptr<Elf> elf;
-    [[nodiscard]] bool Match(const BaseInfo &info) const {
-        return (info.inode != 0 && info.inode == inode) ||
-               (info.inode == 0 && regexec(&info.regex, path.c_str(), 0, nullptr, 0) == 0);
-    }
+    [[nodiscard]] bool Match(const RegisterInfo &info) const { return info.inode == inode; }
 };
 
 class MapInfos : public std::map<uintptr_t, MapInfo, std::greater<>> {
@@ -86,26 +75,12 @@ public:
     }
 
     // fiter out ignored
-    void Filter(const std::list<RegisterInfo> &register_info,
-                const std::list<IgnoreInfo> &ignore_info) {
+    void Filter(const std::list<RegisterInfo> &register_info) {
         for (auto iter = begin(); iter != end();) {
             const auto &info = iter->second;
             bool matched = false;
             for (const auto &reg : register_info) {
-                if (!info.Match(reg)) {
-                    continue;
-                }
-                bool ignored = false;
-                for (const auto &ign : ignore_info) {
-                    if (!info.Match(ign)) {
-                        continue;
-                    }
-                    if (ign.symbol == reg.symbol) {
-                        ignored = true;
-                        break;
-                    }
-                }
-                if (!ignored) {
+                if (info.Match(reg)) {
                     matched = true;
                     break;
                 }
@@ -178,43 +153,21 @@ public:
         return true;
     }
 
-    bool DoHook(std::list<RegisterInfo> &register_info,
-                const std::list<IgnoreInfo> &ignore_info) {
+    bool DoHook(std::list<RegisterInfo> &register_info) {
         bool res = true;
         for (auto &[_, info] : *this) {
             for (auto iter = register_info.begin(); iter != register_info.end();) {
                 const auto &reg = *iter;
-                if (!info.Match(reg)) {
-                    continue;
-                }
-                bool ignored = false;
-                for (const auto &ign : ignore_info) {
-                    if (!info.Match(ign)) {
-                        continue;
-                    }
-                    if (ign.symbol == reg.symbol) {
-                        ignored = true;
-                        break;
-                    }
-                }
-                if (ignored) {
-                    ++iter;
-                    continue;
-                }
-                if (info.start == 0 && !info.elf) {
-                    info.elf = std::make_unique<Elf>(info.start);
-                }
+                if (info.start != 0 || !info.Match(reg)) continue;
+                if (!info.elf) info.elf = std::make_unique<Elf>(info.start);
                 if (info.elf && info.elf->Valid()) {
-                    for (auto addr: info.elf->FindPltAddr(reg.symbol)) {
+                    for (auto addr : info.elf->FindPltAddr(reg.symbol)) {
                         res = DoHook(addr, reinterpret_cast<uintptr_t>(reg.callback),
-                                     reinterpret_cast<uintptr_t *>(reg.backup)) && res;
+                                     reinterpret_cast<uintptr_t *>(reg.backup)) &&
+                              res;
                     }
                 }
-                if (reg.inode != 0) {
-                    iter = register_info.erase(iter);
-                } else {
-                    ++iter;
-                }
+                iter = register_info.erase(iter);
             }
         }
         return res;
@@ -223,101 +176,64 @@ public:
     bool InvalidateBackup() {
         bool res = true;
         for (auto &[_, info] : *this) {
-            if (info.backup) {
-                for (auto &[addr, backup] : info.hooks) {
-                    // store new address to backup since we don't need backup
-                    backup = *reinterpret_cast<uintptr_t *>(addr);
-                }
-                auto len = info.end - info.start;
-                if (auto *new_addr =
-                        mremap(reinterpret_cast<void *>(info.backup), len, len,
-                               MREMAP_FIXED | MREMAP_MAYMOVE, reinterpret_cast<void *>(info.start));
-                    new_addr == MAP_FAILED || reinterpret_cast<uintptr_t>(new_addr) != info.start) {
-                    res = false;
-                    info.hooks.clear();
-                    continue;
-                }
-                for (auto &[addr, backup] : info.hooks) {
-                    *reinterpret_cast<uintptr_t *>(addr) = backup;
-                }
-                info.hooks.clear();
-                info.backup = 0;
+            if (!info.backup) continue;
+            for (auto &[addr, backup] : info.hooks) {
+                // store new address to backup since we don't need backup
+                backup = *reinterpret_cast<uintptr_t *>(addr);
             }
+            auto len = info.end - info.start;
+            if (auto *new_addr =
+                    mremap(reinterpret_cast<void *>(info.backup), len, len,
+                           MREMAP_FIXED | MREMAP_MAYMOVE, reinterpret_cast<void *>(info.start));
+                new_addr == MAP_FAILED || reinterpret_cast<uintptr_t>(new_addr) != info.start) {
+                res = false;
+                info.hooks.clear();
+                continue;
+            }
+            for (auto &[addr, backup] : info.hooks) {
+                *reinterpret_cast<uintptr_t *>(addr) = backup;
+            }
+            info.hooks.clear();
+            info.backup = 0;
         }
         return res;
     }
 };
 
-std::mutex register_mutex;
+std::mutex hook_mutex;
 std::list<RegisterInfo> register_info;
-std::mutex ignore_mutex;
-std::list<IgnoreInfo> ignore_info;
 MapInfos map_info;
 }  // namespace
 
 namespace lsplt {
-[[maybe_unused]] bool RegisterHook(std::string_view regex_str, std::string_view symbol,
-                                   void *callback, void **backup) {
-    if (regex_str.empty() || symbol.empty() || !callback) return false;
-
-    regex_t regex;
-
-    if (regcomp(&regex, regex_str.data(), REG_NOSUB) != 0) return false;
-
-    std::unique_lock lock(register_mutex);
-    register_info.emplace_back(RegisterInfo{{regex, 0, std::string{symbol}}, callback, backup});
-
-    return true;
-}
-
 [[maybe_unused]] bool RegisterHook(ino_t ino, std::string_view symbol, void *callback,
                                    void **backup) {
     if (symbol.empty() || !callback) return false;
 
-    std::unique_lock lock(register_mutex);
-    register_info.emplace_back(RegisterInfo{{{}, ino, std::string{symbol}}, callback, backup});
+    std::unique_lock lock(hook_mutex);
+    register_info.emplace_back(RegisterInfo{ino, std::string{symbol}, callback, backup});
 
     return true;
 }
 
-[[maybe_unused]] void IgnoreHook(std::string_view regex, std::string_view symbol) {
-    if (regex.empty() || symbol.empty()) return;
-
-    regex_t reg;
-
-    if (regcomp(&reg, regex.data(), REG_NOSUB) != 0) return;
-
-    std::unique_lock lock(ignore_mutex);
-    ignore_info.emplace_back(IgnoreInfo{{reg, 0, std::string{symbol}}});
-}
-
-[[maybe_unused]] void IgnoreHook(ino_t ino, std::string_view symbol) {
-    if (symbol.empty()) return;
-
-    std::unique_lock lock(ignore_mutex);
-    ignore_info.emplace_back(IgnoreInfo{{regex_t{}, ino, std::string{symbol}}});
-}
-
 [[maybe_unused]] bool CommitHook() {
-    std::unique_lock lock(register_mutex);
+    std::unique_lock lock(hook_mutex);
     if (register_info.empty()) return true;
-    std::unique_lock lock2(ignore_mutex);
 
     auto new_map_info = MapInfos::ScanMapInfo();
     if (new_map_info.empty()) return false;
 
-    new_map_info.Filter(register_info, ignore_info);
+    new_map_info.Filter(register_info);
 
     new_map_info.Merge(map_info);
     // update to new map info
     map_info = std::move(new_map_info);
 
-    return map_info.DoHook(register_info, ignore_info);
+    return map_info.DoHook(register_info);
 }
 
 [[gnu::destructor]] [[maybe_unused]] bool InvalidateBackup() {
-    std::unique_lock lock(register_mutex);
-    std::unique_lock lock2(ignore_mutex);
+    std::unique_lock lock(hook_mutex);
     return map_info.InvalidateBackup();
 }
 }  // namespace lsplt
