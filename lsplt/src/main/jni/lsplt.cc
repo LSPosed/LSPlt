@@ -15,6 +15,13 @@
 #include "logging.hpp"
 
 namespace {
+
+inline auto PageStart(uintptr_t addr) { return reinterpret_cast<char *>(((addr)&PAGE_MASK)); }
+
+inline auto PageEnd(uintptr_t addr) {
+    return reinterpret_cast<char *>(reinterpret_cast<uintptr_t>(PageStart(addr)) + PAGE_SIZE);
+}
+
 struct RegisterInfo {
     ino_t inode;
     std::string symbol;
@@ -34,13 +41,10 @@ public:
     static auto ScanHookInfo() {
         HookInfos info;
         for (auto &map : lsplt::MapInfo::Scan()) {
-            // we basically only care about r--p entry
+            // we basically only care about r-?p entry
             // and for offset == 0 it's an ELF header
             // and for offset != 0 it's what we hook
-            // if (perm[0] != 'r') continue;
             if (!map.is_private) continue;
-            if (map.perms & PROT_EXEC) continue;
-            // if (off != 0) continue;
             if (map.path.empty()) continue;
             if (map.path[0] == '[') continue;
             auto start = map.start;
@@ -61,8 +65,9 @@ public:
                 }
             }
             if (matched) {
-                LOGV("Match hook info %s:%lu %" PRIxPTR " %" PRIxPTR "-%" PRIxPTR, iter->second.path.data(),
-                     iter->second.inode, iter->second.start, iter->second.end, iter->second.offset);
+                LOGV("Match hook info %s:%lu %" PRIxPTR " %" PRIxPTR "-%" PRIxPTR,
+                     iter->second.path.data(), iter->second.inode, iter->second.start,
+                     iter->second.end, iter->second.offset);
                 ++iter;
             } else {
                 iter = erase(iter);
@@ -102,9 +107,9 @@ public:
                 new_addr == MAP_FAILED || new_addr != backup_addr) {
                 return false;
             }
-            if (auto *new_addr =
-                    mmap(reinterpret_cast<void *>(info.start), len, PROT_READ | PROT_WRITE,
-                         MAP_PRIVATE | MAP_FIXED | MAP_ANON, -1, 0);
+            if (auto *new_addr = mmap(reinterpret_cast<void *>(info.start), len,
+                                      PROT_READ | PROT_WRITE | info.perms,
+                                      MAP_PRIVATE | MAP_FIXED | MAP_ANON, -1, 0);
                 new_addr == MAP_FAILED) {
                 return false;
             }
@@ -113,8 +118,11 @@ public:
         }
         auto *the_addr = reinterpret_cast<uintptr_t *>(addr);
         auto the_backup = *the_addr;
-        if (backup) *backup = the_backup;
-        *the_addr = callback;
+        if (*the_addr != addr) {
+            *the_addr = callback;
+            if (backup) *backup = the_backup;
+            __builtin___clear_cache(PageStart(addr), PageEnd(addr));
+        }
         if (auto hook_iter = info.hooks.find(addr); hook_iter != info.hooks.end()) {
             if (hook_iter->second == callback) info.hooks.erase(hook_iter);
         } else {
@@ -176,11 +184,11 @@ public:
                 info.hooks.clear();
                 continue;
             }
-            if (!mprotect(reinterpret_cast<void *>(info.start), len, PROT_WRITE)) {
+            if (!mprotect(PageStart(info.start), len, PROT_WRITE)) {
                 for (auto &[addr, backup] : info.hooks) {
                     *reinterpret_cast<uintptr_t *>(addr) = backup;
                 }
-                mprotect(reinterpret_cast<void *>(info.start), len, info.perms);
+                mprotect(PageStart(info.start), len, info.perms);
             }
             info.hooks.clear();
             info.backup = 0;
