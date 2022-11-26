@@ -183,6 +183,7 @@ HookInfos hook_info;
 }  // namespace
 
 namespace lsplt {
+inline namespace v1 {
 [[maybe_unused]] std::vector<MapInfo> MapInfo::Scan() {
     constexpr static auto kPermLength = 5;
     constexpr static auto kMapEntry = 7;
@@ -218,6 +219,7 @@ namespace lsplt {
     }
     return info;
 }
+
 [[maybe_unused]] bool RegisterHook(ino_t ino, std::string_view symbol, void *callback,
                                    void **backup) {
     if (symbol.empty() || !callback) return false;
@@ -248,4 +250,5 @@ namespace lsplt {
     std::unique_lock lock(hook_mutex);
     return hook_info.InvalidateBackup();
 }
+}  // namespace v1
 }  // namespace lsplt
