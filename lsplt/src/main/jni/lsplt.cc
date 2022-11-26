@@ -33,14 +33,27 @@ struct HookInfo : public lsplt::MapInfo {
     std::map<uintptr_t, uintptr_t> hooks;
     uintptr_t backup;
     std::unique_ptr<Elf> elf;
+    bool self;
     [[nodiscard]] bool Match(const RegisterInfo &info) const { return info.inode == inode; }
 };
 
 class HookInfos : public std::map<uintptr_t, HookInfo, std::greater<>> {
 public:
     static auto ScanHookInfo() {
+        static ino_t kSelfInode = 0;
         HookInfos info;
-        for (auto &map : lsplt::MapInfo::Scan()) {
+        auto maps = lsplt::MapInfo::Scan();
+        if (kSelfInode == 0) {
+            auto self = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+            for (auto &map : maps) {
+                if (self >= map.start && self < map.end) {
+                    kSelfInode = map.inode;
+                    LOGV("self inode = %lu", kSelfInode);
+                    break;
+                }
+            }
+        }
+        for (auto &map : maps) {
             // we basically only care about r-?p entry
             // and for offset == 0 it's an ELF header
             // and for offset != 0 it's what we hook
@@ -48,7 +61,8 @@ public:
             if (map.path.empty()) continue;
             if (map.path[0] == '[') continue;
             auto start = map.start;
-            info.emplace(start, HookInfo{{std::move(map)}, {}, 0, nullptr});
+            auto inode = map.inode;
+            info.emplace(start, HookInfo{{std::move(map)}, {}, 0, nullptr, inode == kSelfInode});
         }
         return info;
     }
@@ -96,7 +110,7 @@ public:
         // iter.first < addr
         auto &info = iter->second;
         if (info.end <= addr) return false;
-        if (!iter->second.backup) {
+        if (!iter->second.backup && !info.self) {
             auto len = info.end - info.start;
             // let os find a suitable address
             auto *backup_addr = mmap(nullptr, len, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -116,6 +130,14 @@ public:
             memcpy(reinterpret_cast<void *>(info.start), backup_addr, len);
             info.backup = reinterpret_cast<uintptr_t>(backup_addr);
         }
+        if (info.self) {
+            // self hooking, no need backup since we are always dirty
+            auto len = info.end - info.start;
+            if (!(info.perms & PROT_WRITE)) {
+                info.perms |= PROT_WRITE;
+                mprotect(reinterpret_cast<void *>(info.start), len, info.perms);
+            }
+        }
         auto *the_addr = reinterpret_cast<uintptr_t *>(addr);
         auto the_backup = *the_addr;
         if (*the_addr != addr) {
@@ -128,7 +150,7 @@ public:
         } else {
             info.hooks.emplace(addr, the_backup);
         }
-        if (info.hooks.empty()) {
+        if (info.hooks.empty() && !info.self) {
             auto len = info.end - info.start;
             LOGD("Restore %p from %p", reinterpret_cast<void *>(info.start),
                  reinterpret_cast<void *>(info.backup));
