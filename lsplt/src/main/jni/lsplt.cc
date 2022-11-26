@@ -164,11 +164,12 @@ public:
                 info.hooks.clear();
                 continue;
             }
-            mprotect(reinterpret_cast<void *>(info.start), len, PROT_WRITE);
-            for (auto &[addr, backup] : info.hooks) {
-                *reinterpret_cast<uintptr_t *>(addr) = backup;
+            if (!mprotect(reinterpret_cast<void *>(info.start), len, PROT_WRITE)) {
+                for (auto &[addr, backup] : info.hooks) {
+                    *reinterpret_cast<uintptr_t *>(addr) = backup;
+                }
+                mprotect(reinterpret_cast<void *>(info.start), len, info.perm);
             }
-            mprotect(reinterpret_cast<void *>(info.start), len, info.perm);
             info.hooks.clear();
             info.backup = 0;
         }
