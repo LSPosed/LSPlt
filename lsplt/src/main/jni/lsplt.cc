@@ -38,7 +38,7 @@ public:
             // and for offset != 0 it's what we hook
             // if (perm[0] != 'r') continue;
             if (!map.is_private) continue;
-            if (map.perm & PROT_EXEC) continue;
+            if (map.perms & PROT_EXEC) continue;
             // if (off != 0) continue;
             if (map.path.empty()) continue;
             if (map.path[0] == '[') continue;
@@ -168,7 +168,7 @@ public:
                 for (auto &[addr, backup] : info.hooks) {
                     *reinterpret_cast<uintptr_t *>(addr) = backup;
                 }
-                mprotect(reinterpret_cast<void *>(info.start), len, info.perm);
+                mprotect(reinterpret_cast<void *>(info.start), len, info.perms);
             }
             info.hooks.clear();
             info.backup = 0;
@@ -207,12 +207,12 @@ namespace lsplt {
                 continue;
             }
             while (path_off < read && isspace(line[path_off])) path_off++;
-            auto &ref = info.emplace_back(MapInfo{start, end, 0, perm[3] == 'p',
+            auto &ref = info.emplace_back(MapInfo{start, end, 0, perm[3] == 'p', off,
                                                   static_cast<dev_t>(makedev(dev_major, dev_minor)),
                                                   inode, line + path_off});
-            if (perm[0] == 'r') ref.perm |= PROT_READ;
-            if (perm[1] == 'w') ref.perm |= PROT_WRITE;
-            if (perm[2] == 'x') ref.perm |= PROT_EXEC;
+            if (perm[0] == 'r') ref.perms |= PROT_READ;
+            if (perm[1] == 'w') ref.perms |= PROT_WRITE;
+            if (perm[2] == 'x') ref.perms |= PROT_EXEC;
         }
         free(line);
     }

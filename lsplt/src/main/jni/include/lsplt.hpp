@@ -11,8 +11,9 @@ inline namespace v1 {
 struct MapInfo {
     uintptr_t start;
     uintptr_t end;
-    uint8_t perm;
+    uint8_t perms;
     bool is_private;
+    uintptr_t offset;
     dev_t dev;
     ino_t inode;
     std::string path;
