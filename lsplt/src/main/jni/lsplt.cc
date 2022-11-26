@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "elf_util.hpp"
+#include "logging.hpp"
 
 namespace {
 struct RegisterInfo {
@@ -60,6 +61,8 @@ public:
                 }
             }
             if (matched) {
+                LOGV("Match hook info %s:%lu %" PRIxPTR " %" PRIxPTR "-%" PRIxPTR, iter->second.path.data(),
+                     iter->second.inode, iter->second.start, iter->second.end, iter->second.offset);
                 ++iter;
             } else {
                 iter = erase(iter);
@@ -75,13 +78,14 @@ public:
             }
             if (auto iter = find(info.first); iter != end()) {
                 iter->second = std::move(info.second);
-            } else {
+            } else if (info.second.backup) {
                 emplace(info.first, std::move(info.second));
             }
         }
     }
 
     bool DoHook(uintptr_t addr, uintptr_t callback, uintptr_t *backup) {
+        LOGV("Hooking %p", reinterpret_cast<void *>(addr));
         auto iter = lower_bound(addr);
         if (iter == end()) return false;
         // iter.first < addr
@@ -91,6 +95,7 @@ public:
             auto len = info.end - info.start;
             // let os find a suitable address
             auto *backup_addr = mmap(nullptr, len, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+            LOGD("Backup %p to %p", reinterpret_cast<void *>(addr), backup_addr);
             if (backup_addr == MAP_FAILED) return false;
             if (auto *new_addr = mremap(reinterpret_cast<void *>(info.start), len, len,
                                         MREMAP_FIXED | MREMAP_MAYMOVE, backup_addr);
@@ -107,15 +112,18 @@ public:
             info.backup = reinterpret_cast<uintptr_t>(backup_addr);
         }
         auto *the_addr = reinterpret_cast<uintptr_t *>(addr);
-        *backup = *the_addr;
+        auto the_backup = *the_addr;
+        if (backup) *backup = the_backup;
         *the_addr = callback;
         if (auto hook_iter = info.hooks.find(addr); hook_iter != info.hooks.end()) {
             if (hook_iter->second == callback) info.hooks.erase(hook_iter);
         } else {
-            info.hooks.emplace(addr, *backup);
+            info.hooks.emplace(addr, the_backup);
         }
         if (info.hooks.empty()) {
             auto len = info.end - info.start;
+            LOGD("Restore %p from %p", reinterpret_cast<void *>(info.start),
+                 reinterpret_cast<void *>(info.backup));
             if (auto *new_addr =
                     mremap(reinterpret_cast<void *>(info.backup), len, len,
                            MREMAP_FIXED | MREMAP_MAYMOVE, reinterpret_cast<void *>(info.start));
@@ -132,9 +140,13 @@ public:
         for (auto &[_, info] : *this) {
             for (auto iter = register_info.begin(); iter != register_info.end();) {
                 const auto &reg = *iter;
-                if (info.start != 0 || !info.Match(reg)) continue;
+                if (info.offset != 0 || !info.Match(reg)) {
+                    ++iter;
+                    continue;
+                }
                 if (!info.elf) info.elf = std::make_unique<Elf>(info.start);
                 if (info.elf && info.elf->Valid()) {
+                    LOGD("Hooking %s", iter->symbol.data());
                     for (auto addr : info.elf->FindPltAddr(reg.symbol)) {
                         res = DoHook(addr, reinterpret_cast<uintptr_t>(reg.callback),
                                      reinterpret_cast<uintptr_t *>(reg.backup)) &&
@@ -193,7 +205,8 @@ inline namespace v1 {
         char *line = nullptr;
         size_t len = 0;
         ssize_t read;
-        while ((read = getline(&line, &len, maps.get())) != -1) {
+        while ((read = getline(&line, &len, maps.get())) > 0) {
+            line[read - 1] = '\0';
             uintptr_t start = 0;
             uintptr_t end = 0;
             uintptr_t off = 0;
@@ -220,12 +233,13 @@ inline namespace v1 {
     return info;
 }
 
-[[maybe_unused]] bool RegisterHook(ino_t ino, std::string_view symbol, void *callback,
+[[maybe_unused]] bool RegisterHook(ino_t inode, std::string_view symbol, void *callback,
                                    void **backup) {
-    if (symbol.empty() || !callback) return false;
+    if (inode == 0 || symbol.empty() || !callback) return false;
+    LOGV("RegisterHook %lu %s", inode, symbol.data());
 
     std::unique_lock lock(hook_mutex);
-    register_info.emplace_back(RegisterInfo{ino, std::string{symbol}, callback, backup});
+    register_info.emplace_back(RegisterInfo{inode, std::string{symbol}, callback, backup});
 
     return true;
 }
