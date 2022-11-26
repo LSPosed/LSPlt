@@ -1,0 +1,109 @@
+name: Build
+
+on:
+  push:
+    branches: ["master"]
+    paths-ignore:
+      - 'README.md'
+  pull_request:
+
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macOS-latest ]
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v3
+        with:
+          submodules: 'recursive'
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+      - name: Cache Gradle Build
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches/build-cache-*
+            ~/.gradle/buildOutputCleanup/cache.properties
+          key: gradle-builds-core-${{ github.sha }}
+          restore-keys: |
+            gradle-builds-${{ runner.os }}
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-${{ github.sha }}
+          restore-keys: ${{ runner.os }}
+      - name: Build with Gradle
+        run: |
+          ccache -o cache_dir=${{ github.workspace }}/.ccache
+          ccache -o hash_dir=false
+          ccache -o compiler_check='%compiler% -dumpmachine; %compiler% -dumpversion'
+          ccache -p
+          echo 'android.native.buildOutput=verbose' >> gradle.properties
+          ./gradlew :lsplt:publishToMavenLocal :lsplt:prefabDebugPackage
+        env:
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.maven_pgp_signingKey }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.maven_pgp_signingPassword }}
+      - name: Upload library
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.os }}-library
+          path: ~/.m2
+
+  agp-test:
+    name: Test using AGP
+    runs-on: macos-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: 'recursive'
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+      - name: Cache Gradle Build
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches/build-cache-*
+            ~/.gradle/buildOutputCleanup/cache.properties
+          key: gradle-builds-core-${{ github.sha }}
+          restore-keys: |
+            gradle-builds-${{ runner.os }}
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-${{ github.sha }}
+          restore-keys: ${{ runner.os }}
+          save: false
+      - name: Test with Gradle
+        run: |
+          ccache -o cache_dir=${{ github.workspace }}/.ccache
+          ccache -o hash_dir=false
+          ccache -o compiler_check='%compiler% -dumpmachine; %compiler% -dumpversion'
+          echo -e "84831b9409646a918e30573bab4c9c91346d8abd" > $ANDROID_SDK_ROOT/licenses/android-sdk-preview-license
+          echo 'android.testoptions.manageddevices.emulator.gpu=swiftshader_indirect' >> gradle.properties
+          echo 'android.native.buildOutput=verbose' >> gradle.properties
+          echo 'android.sdk.channel=3' >> gradle.properties
+          ./gradlew :test:testOnAllMVDs
+      - name: Prepare upload
+        if: always()
+        run: rm -vf test/build/outputs/androidTest-results/managedDevice/*/testlog/adb.additional_test_output*
+      - name: Upload outputs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-outputs
+          path: test/build/outputs
