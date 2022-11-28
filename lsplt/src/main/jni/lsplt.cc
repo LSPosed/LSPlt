@@ -276,7 +276,7 @@ inline namespace v1 {
     std::unique_lock lock(hook_mutex);
     static_assert(std::numeric_limits<uintptr_t>::min() == 0);
     static_assert(std::numeric_limits<uintptr_t>::max() == -1);
-    const auto &info = register_info.emplace_back(
+    [[maybe_unused]] const auto &info = register_info.emplace_back(
         RegisterInfo{inode,
                      {std::numeric_limits<uintptr_t>::min(), std::numeric_limits<uintptr_t>::max()},
                      std::string{symbol},
@@ -294,7 +294,7 @@ inline namespace v1 {
     std::unique_lock lock(hook_mutex);
     static_assert(std::numeric_limits<uintptr_t>::min() == 0);
     static_assert(std::numeric_limits<uintptr_t>::max() == -1);
-    const auto &info = register_info.emplace_back(
+    [[maybe_unused]] const auto &info = register_info.emplace_back(
         RegisterInfo{inode, {offset, offset + size}, std::string{symbol}, callback, backup});
 
     LOGV("RegisterHook %lu %" PRIxPTR "-%" PRIxPTR " %s", info.inode, info.offset_range.first,
