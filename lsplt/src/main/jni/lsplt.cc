@@ -24,6 +24,7 @@ inline auto PageEnd(uintptr_t addr) {
 
 struct RegisterInfo {
     ino_t inode;
+    std::pair<uintptr_t, uintptr_t> offset_range;
     std::string symbol;
     void *callback;
     void **backup;
@@ -34,7 +35,10 @@ struct HookInfo : public lsplt::MapInfo {
     uintptr_t backup;
     std::unique_ptr<Elf> elf;
     bool self;
-    [[nodiscard]] bool Match(const RegisterInfo &info) const { return info.inode == inode; }
+    [[nodiscard]] bool Match(const RegisterInfo &info) const {
+        return info.inode == inode && offset >= info.offset_range.first &&
+               offset < info.offset_range.second;
+    }
 };
 
 class HookInfos : public std::map<uintptr_t, HookInfo, std::greater<>> {
@@ -172,7 +176,7 @@ public:
         for (auto &[_, info] : *this) {
             for (auto iter = register_info.begin(); iter != register_info.end();) {
                 const auto &reg = *iter;
-                if (info.offset != 0 || !info.Match(reg)) {
+                if (info.offset != iter->offset_range.first || !info.Match(reg)) {
                     ++iter;
                     continue;
                 }
@@ -268,11 +272,33 @@ inline namespace v1 {
 [[maybe_unused]] bool RegisterHook(ino_t inode, std::string_view symbol, void *callback,
                                    void **backup) {
     if (inode == 0 || symbol.empty() || !callback) return false;
-    LOGV("RegisterHook %lu %s", inode, symbol.data());
 
     std::unique_lock lock(hook_mutex);
-    register_info.emplace_back(RegisterInfo{inode, std::string{symbol}, callback, backup});
+    static_assert(std::numeric_limits<uintptr_t>::min() == 0);
+    static_assert(std::numeric_limits<uintptr_t>::max() == -1);
+    const auto &info = register_info.emplace_back(
+        RegisterInfo{inode,
+                     {std::numeric_limits<uintptr_t>::min(), std::numeric_limits<uintptr_t>::max()},
+                     std::string{symbol},
+                     callback,
+                     backup});
 
+    LOGV("RegisterHook %lu %s", info.inode, info.symbol.data());
+    return true;
+}
+
+[[maybe_unused]] bool RegisterHook(ino_t inode, uintptr_t offset, size_t size,
+                                   std::string_view symbol, void *callback, void **backup) {
+    if (inode == 0 || symbol.empty() || !callback) return false;
+
+    std::unique_lock lock(hook_mutex);
+    static_assert(std::numeric_limits<uintptr_t>::min() == 0);
+    static_assert(std::numeric_limits<uintptr_t>::max() == -1);
+    const auto &info = register_info.emplace_back(
+        RegisterInfo{inode, {offset, offset + size}, std::string{symbol}, callback, backup});
+
+    LOGV("RegisterHook %lu %" PRIxPTR "-%" PRIxPTR " %s", info.inode, info.offset_range.first,
+         info.offset_range.second, info.symbol.data());
     return true;
 }
 
