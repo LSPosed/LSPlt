@@ -43,11 +43,11 @@ struct MapInfo {
 
 /// \brief Register a hook to a function by inode. For so within an archive, you should use
 /// #RegisterHook(ino_t, uintptr_t, size_t, std::string_view, void *, void **) instead.
-/// \param inode The inode of the library to hook. You can obtain the inode by #stat() or by finding
+/// \param[in] inode The inode of the library to hook. You can obtain the inode by #stat() or by finding
 /// the library in the list returned by #lsplt::v1::MapInfo::Scan().
-/// \param symbol The function symbol to hook.
-/// \param callback The callback function pointer to call when the function is called.
-/// \param backup The backup function pointer which can call the original function. This is
+/// \param[in] symbol The function symbol to hook.
+/// \param[in] callback The callback function pointer to call when the function is called.
+/// \param[out] backup The backup function pointer which can call the original function. This is
 /// optional.
 /// \return Whether the hook is successfully registered.
 /// \note This function is thread-safe.
@@ -67,13 +67,13 @@ struct MapInfo {
 
 /// \brief Register a hook to a function by inode with offset range. This is useful when hooking
 /// a library that is directly loaded from an archive without extraction.
-/// \param inode The inode of the library to hook. You can obtain the inode by #stat() or by finding
+/// \param[in] inode The inode of the library to hook. You can obtain the inode by #stat() or by finding
 /// the library in the list returned by #lsplt::v1::MapInfo::Scan().
-/// \param offset The to the library in the file.
-/// \param size The upper bound size to the library in the file.
-/// \param symbol The function symbol to hook.
-/// \param callback The callback function pointer to call when the function is called.
-/// \param backup The backup function pointer which can call the original function. This is
+/// \param[in] offset The to the library in the file.
+/// \param[in] size The upper bound size to the library in the file.
+/// \param[in] symbol The function symbol to hook.
+/// \param[in] callback The callback function pointer to call when the function is called.
+/// \param[out] backup The backup function pointer which can call the original function. This is
 /// optional.
 /// \return Whether the hook is successfully registered.
 /// \note This function is thread-safe.
@@ -93,6 +93,8 @@ struct MapInfo {
 /// cannot be found.
 /// \note The \p size can be inaccurate but should be larger or equal to the library size,
 /// otherwise the hook may fail when the hook pointer is beyond the range.
+/// \note The behaviour of this function is undefined if \p offset + \p size is larger than the
+/// the maximum value of \p size_t.
 /// \see #CommitHook()
 /// \see #InvalidateBackup()
 [[maybe_unused, gnu::visibility("default")]] bool RegisterHook(ino_t inode, uintptr_t offset,
