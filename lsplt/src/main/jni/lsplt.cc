@@ -57,9 +57,11 @@ public:
             // we basically only care about r-?p entry
             // and for offset == 0 it's an ELF header
             // and for offset != 0 it's what we hook
-            if (!map.is_private) continue;
-            if (map.path.empty()) continue;
-            if (map.path[0] == '[') continue;
+            // both of them should not be xom
+            if (!map.is_private || !(map.perms & PROT_READ) || map.path.empty() ||
+                map.path[0] == '[') {
+                continue;
+            }
             auto start = map.start;
             auto inode = map.inode;
             info.emplace(start, HookInfo{{std::move(map)}, {}, 0, nullptr, inode == kSelfInode});
