@@ -5,7 +5,7 @@
 #include <string>
 #include <string_view>
 
-/// \namespace namespace of LSPlt
+/// \namespace lsplt
 namespace lsplt {
 inline namespace v1 {
 
