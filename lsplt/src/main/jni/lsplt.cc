@@ -146,7 +146,7 @@ public:
         }
         auto *the_addr = reinterpret_cast<uintptr_t *>(addr);
         auto the_backup = *the_addr;
-        if (*the_addr != addr) {
+        if (*the_addr != callback) {
             *the_addr = callback;
             if (backup) *backup = the_backup;
             __builtin___clear_cache(PageStart(addr), PageEnd(addr));
