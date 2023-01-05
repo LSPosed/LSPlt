@@ -2,6 +2,7 @@
 #include <link.h>
 #include <stdint.h>
 #include <string_view>
+#include <vector>
 
 class Elf {
     ElfW(Addr) base_addr_ = 0;

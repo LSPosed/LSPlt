@@ -3,6 +3,7 @@
 #include <cstring>
 #include <type_traits>
 #include <vector>
+#include <tuple>
 
 #if defined(__arm__)
 #define ELF_R_GENERIC_JUMP_SLOT R_ARM_JUMP_SLOT  //.rel.plt

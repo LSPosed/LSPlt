@@ -1,6 +1,5 @@
 #include "include/lsplt.hpp"
 
-#include <regex.h>
 #include <sys/mman.h>
 #include <sys/sysmacros.h>
 
@@ -173,7 +172,8 @@ public:
 
     bool DoHook(std::list<RegisterInfo> &register_info) {
         bool res = true;
-        for (auto &[_, info] : *this) {
+        for (auto info_iter = rbegin(); info_iter != rend(); ++info_iter) {
+            auto &info = info_iter->second;
             for (auto iter = register_info.begin(); iter != register_info.end();) {
                 const auto &reg = *iter;
                 if (info.offset != iter->offset_range.first || !info.Match(reg)) {
