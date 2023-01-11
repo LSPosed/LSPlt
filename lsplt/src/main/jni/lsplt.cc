@@ -15,6 +15,8 @@
 
 namespace {
 
+bool cannot_remap_;
+
 inline auto PageStart(uintptr_t addr) { return reinterpret_cast<char *>(((addr)&PAGE_MASK)); }
 
 inline auto PageEnd(uintptr_t addr) {
@@ -72,7 +74,7 @@ public:
         return info;
     }
 
-    // fiter out ignored
+    // filter out ignored
     void Filter(const std::list<RegisterInfo> &register_info) {
         for (auto iter = begin(); iter != end();) {
             const auto &info = iter->second;
@@ -115,8 +117,15 @@ public:
         // iter.first < addr
         auto &info = iter->second;
         if (info.end <= addr) return false;
+        auto len = info.end - info.start;
+
+        if (cannot_remap_) {
+            // For some reason we cannot call remap, treat it as self hooking so we won't try to remap again
+            info.self = true;
+            goto self_hook;
+        }
+
         if (!iter->second.backup && !info.self) {
-            auto len = info.end - info.start;
             // let os find a suitable address
             auto *backup_addr = mmap(nullptr, len, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
             LOGD("Backup %p to %p", reinterpret_cast<void *>(addr), backup_addr);
@@ -124,6 +133,13 @@ public:
             if (auto *new_addr = mremap(reinterpret_cast<void *>(info.start), len, len,
                                         MREMAP_FIXED | MREMAP_MAYMOVE, backup_addr);
                 new_addr == MAP_FAILED || new_addr != backup_addr) {
+                if (new_addr == MAP_FAILED) {
+                    // Kernel issue?
+                    PLOGE("falling back to direct modification because mremap");
+                    cannot_remap_ = true;
+                    info.self = true;
+                    goto self_hook;
+                }
                 return false;
             }
             if (auto *new_addr = mmap(reinterpret_cast<void *>(info.start), len,
@@ -135,9 +151,10 @@ public:
             memcpy(reinterpret_cast<void *>(info.start), backup_addr, len);
             info.backup = reinterpret_cast<uintptr_t>(backup_addr);
         }
+
+        self_hook:
         if (info.self) {
             // self hooking, no need backup since we are always dirty
-            auto len = info.end - info.start;
             if (!(info.perms & PROT_WRITE)) {
                 info.perms |= PROT_WRITE;
                 mprotect(reinterpret_cast<void *>(info.start), len, info.perms);
@@ -156,7 +173,6 @@ public:
             info.hooks.emplace(addr, the_backup);
         }
         if (info.hooks.empty() && !info.self) {
-            auto len = info.end - info.start;
             LOGD("Restore %p from %p", reinterpret_cast<void *>(info.start),
                  reinterpret_cast<void *>(info.backup));
             if (auto *new_addr =
