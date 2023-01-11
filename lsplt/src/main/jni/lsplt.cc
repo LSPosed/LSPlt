@@ -109,14 +109,15 @@ public:
     }
 
     bool DoHook(uintptr_t addr, uintptr_t callback, uintptr_t *backup) {
+        static bool kSkipRemap = false;
         LOGV("Hooking %p", reinterpret_cast<void *>(addr));
         auto iter = lower_bound(addr);
         if (iter == end()) return false;
         // iter.first < addr
         auto &info = iter->second;
         if (info.end <= addr) return false;
-        if (!iter->second.backup && !info.self) {
-            auto len = info.end - info.start;
+        const auto len = info.end - info.start;
+        while (!info.backup && !info.self && !kSkipRemap) {
             // let os find a suitable address
             auto *backup_addr = mmap(nullptr, len, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
             LOGD("Backup %p to %p", reinterpret_cast<void *>(addr), backup_addr);
@@ -124,7 +125,8 @@ public:
             if (auto *new_addr = mremap(reinterpret_cast<void *>(info.start), len, len,
                                         MREMAP_FIXED | MREMAP_MAYMOVE, backup_addr);
                 new_addr == MAP_FAILED || new_addr != backup_addr) {
-                return false;
+                kSkipRemap = true;
+                break;
             }
             if (auto *new_addr = mmap(reinterpret_cast<void *>(info.start), len,
                                       PROT_READ | PROT_WRITE | info.perms,
@@ -134,10 +136,10 @@ public:
             }
             memcpy(reinterpret_cast<void *>(info.start), backup_addr, len);
             info.backup = reinterpret_cast<uintptr_t>(backup_addr);
+            break;
         }
-        if (info.self) {
+        if (info.self || !info.backup) {
             // self hooking, no need backup since we are always dirty
-            auto len = info.end - info.start;
             if (!(info.perms & PROT_WRITE)) {
                 info.perms |= PROT_WRITE;
                 mprotect(reinterpret_cast<void *>(info.start), len, info.perms);
@@ -155,8 +157,7 @@ public:
         } else {
             info.hooks.emplace(addr, the_backup);
         }
-        if (info.hooks.empty() && !info.self) {
-            auto len = info.end - info.start;
+        if (info.hooks.empty() && !info.self && info.backup) {
             LOGD("Restore %p from %p", reinterpret_cast<void *>(info.start),
                  reinterpret_cast<void *>(info.backup));
             if (auto *new_addr =
