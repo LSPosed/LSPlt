@@ -7,7 +7,7 @@
 
 /// \namespace lsplt
 namespace lsplt {
-inline namespace v1 {
+inline namespace v2 {
 
 /// \struct MapInfo
 /// \brief An entry that describes a line in /proc/self/maps. You can obtain a list of these entries
@@ -43,6 +43,7 @@ struct MapInfo {
 
 /// \brief Register a hook to a function by inode. For so within an archive, you should use
 /// #RegisterHook(ino_t, uintptr_t, size_t, std::string_view, void *, void **) instead.
+/// \param[in] dev The device number of the memory region.
 /// \param[in] inode The inode of the library to hook. You can obtain the inode by #stat() or by finding
 /// the library in the list returned by #lsplt::v1::MapInfo::Scan().
 /// \param[in] symbol The function symbol to hook.
@@ -62,11 +63,12 @@ struct MapInfo {
 /// #InvalidateBackup().
 /// \see #CommitHook()
 /// \see #InvalidateBackup()
-[[maybe_unused, gnu::visibility("default")]] bool RegisterHook(ino_t inode, std::string_view symbol,
+[[maybe_unused, gnu::visibility("default")]] bool RegisterHook(dev_t dev, ino_t inode, std::string_view symbol,
                                                                void *callback, void **backup);
 
 /// \brief Register a hook to a function by inode with offset range. This is useful when hooking
 /// a library that is directly loaded from an archive without extraction.
+/// \param[in] dev The device number of the memory region.
 /// \param[in] inode The inode of the library to hook. You can obtain the inode by #stat() or by finding
 /// the library in the list returned by #lsplt::v1::MapInfo::Scan().
 /// \param[in] offset The to the library in the file.
@@ -97,7 +99,7 @@ struct MapInfo {
 /// the maximum value of \p size_t.
 /// \see #CommitHook()
 /// \see #InvalidateBackup()
-[[maybe_unused, gnu::visibility("default")]] bool RegisterHook(ino_t inode, uintptr_t offset,
+[[maybe_unused, gnu::visibility("default")]] bool RegisterHook(dev_t dev, ino_t inode, uintptr_t offset,
                                                                size_t size, std::string_view symbol,
                                                                void *callback, void **backup);
 /// \brief Commit all registered hooks.
@@ -120,5 +122,5 @@ struct MapInfo {
 /// \note This will be automatically called when the library is unloaded.
 /// \see #RegisterHook()
 [[maybe_unused, gnu::visibility("default")]] bool InvalidateBackup();
-}  // namespace v1
+}  // namespace v2
 }  // namespace lsplt

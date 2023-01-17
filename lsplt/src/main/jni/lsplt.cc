@@ -22,6 +22,7 @@ inline auto PageEnd(uintptr_t addr) {
 }
 
 struct RegisterInfo {
+    dev_t dev;
     ino_t inode;
     std::pair<uintptr_t, uintptr_t> offset_range;
     std::string symbol;
@@ -35,7 +36,7 @@ struct HookInfo : public lsplt::MapInfo {
     std::unique_ptr<Elf> elf;
     bool self;
     [[nodiscard]] bool Match(const RegisterInfo &info) const {
-        return info.inode == inode && offset >= info.offset_range.first &&
+        return info.dev == dev && info.inode == inode && offset >= info.offset_range.first &&
                offset < info.offset_range.second;
     }
 };
@@ -232,7 +233,7 @@ HookInfos hook_info;
 }  // namespace
 
 namespace lsplt {
-inline namespace v1 {
+inline namespace v2 {
 [[maybe_unused]] std::vector<MapInfo> MapInfo::Scan() {
     constexpr static auto kPermLength = 5;
     constexpr static auto kMapEntry = 7;
@@ -270,7 +271,7 @@ inline namespace v1 {
     return info;
 }
 
-[[maybe_unused]] bool RegisterHook(ino_t inode, std::string_view symbol, void *callback,
+[[maybe_unused]] bool RegisterHook(dev_t dev, ino_t inode, std::string_view symbol, void *callback,
                                    void **backup) {
     if (inode == 0 || symbol.empty() || !callback) return false;
 
@@ -278,7 +279,7 @@ inline namespace v1 {
     static_assert(std::numeric_limits<uintptr_t>::min() == 0);
     static_assert(std::numeric_limits<uintptr_t>::max() == -1);
     [[maybe_unused]] const auto &info = register_info.emplace_back(
-        RegisterInfo{inode,
+        RegisterInfo{dev, inode,
                      {std::numeric_limits<uintptr_t>::min(), std::numeric_limits<uintptr_t>::max()},
                      std::string{symbol},
                      callback,
@@ -288,7 +289,7 @@ inline namespace v1 {
     return true;
 }
 
-[[maybe_unused]] bool RegisterHook(ino_t inode, uintptr_t offset, size_t size,
+[[maybe_unused]] bool RegisterHook(dev_t dev, ino_t inode, uintptr_t offset, size_t size,
                                    std::string_view symbol, void *callback, void **backup) {
     if (inode == 0 || symbol.empty() || !callback) return false;
 
@@ -296,7 +297,7 @@ inline namespace v1 {
     static_assert(std::numeric_limits<uintptr_t>::min() == 0);
     static_assert(std::numeric_limits<uintptr_t>::max() == -1);
     [[maybe_unused]] const auto &info = register_info.emplace_back(
-        RegisterInfo{inode, {offset, offset + size}, std::string{symbol}, callback, backup});
+        RegisterInfo{dev, inode, {offset, offset + size}, std::string{symbol}, callback, backup});
 
     LOGV("RegisterHook %lu %" PRIxPTR "-%" PRIxPTR " %s", info.inode, info.offset_range.first,
          info.offset_range.second, info.symbol.data());
@@ -323,5 +324,5 @@ inline namespace v1 {
     std::unique_lock lock(hook_mutex);
     return hook_info.InvalidateBackup();
 }
-}  // namespace v1
+}  // namespace v2
 }  // namespace lsplt
