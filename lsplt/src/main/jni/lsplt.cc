@@ -45,6 +45,7 @@ class HookInfos : public std::map<uintptr_t, HookInfo, std::greater<>> {
 public:
     static auto ScanHookInfo() {
         static ino_t kSelfInode = 0;
+        static dev_t kSelfDev = 0;
         HookInfos info;
         auto maps = lsplt::MapInfo::Scan();
         if (kSelfInode == 0) {
@@ -52,6 +53,7 @@ public:
             for (auto &map : maps) {
                 if (self >= map.start && self < map.end) {
                     kSelfInode = map.inode;
+                    kSelfDev = map.dev;
                     LOGV("self inode = %lu", kSelfInode);
                     break;
                 }
@@ -67,13 +69,13 @@ public:
                 continue;
             }
             auto start = map.start;
-            auto inode = map.inode;
-            info.emplace(start, HookInfo{{std::move(map)}, {}, 0, nullptr, inode == kSelfInode});
+            bool self = map.inode == kSelfInode && map.dev == kSelfDev;
+            info.emplace(start, HookInfo{{std::move(map)}, {}, 0, nullptr, self});
         }
         return info;
     }
 
-    // fiter out ignored
+    // filter out ignored
     void Filter(const std::list<RegisterInfo> &register_info) {
         for (auto iter = begin(); iter != end();) {
             const auto &info = iter->second;
@@ -273,7 +275,7 @@ inline namespace v2 {
 
 [[maybe_unused]] bool RegisterHook(dev_t dev, ino_t inode, std::string_view symbol, void *callback,
                                    void **backup) {
-    if (inode == 0 || symbol.empty() || !callback) return false;
+    if (dev == 0 || inode == 0 || symbol.empty() || !callback) return false;
 
     std::unique_lock lock(hook_mutex);
     static_assert(std::numeric_limits<uintptr_t>::min() == 0);
@@ -291,7 +293,7 @@ inline namespace v2 {
 
 [[maybe_unused]] bool RegisterHook(dev_t dev, ino_t inode, uintptr_t offset, size_t size,
                                    std::string_view symbol, void *callback, void **backup) {
-    if (inode == 0 || symbol.empty() || !callback) return false;
+    if (dev == 0 || inode == 0 || symbol.empty() || !callback) return false;
 
     std::unique_lock lock(hook_mutex);
     static_assert(std::numeric_limits<uintptr_t>::min() == 0);
