@@ -12,6 +12,7 @@
 
 #include "elf_util.hpp"
 #include "logging.hpp"
+#include "syscall.hpp"
 
 namespace {
 
@@ -113,6 +114,7 @@ public:
 
     bool DoHook(uintptr_t addr, uintptr_t callback, uintptr_t *backup) {
         static bool kSkipRemap = false;
+        using PAGE = std::array<char, PAGE_SIZE>;
         LOGV("Hooking %p", reinterpret_cast<void *>(addr));
         auto iter = lower_bound(addr);
         if (iter == end()) return false;
@@ -122,22 +124,27 @@ public:
         const auto len = info.end - info.start;
         while (!info.backup && !info.self && !kSkipRemap) {
             // let os find a suitable address
-            auto *backup_addr = mmap(nullptr, len, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+            auto *backup_addr = sys_mmap(nullptr, len, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
             LOGD("Backup %p to %p", reinterpret_cast<void *>(addr), backup_addr);
             if (backup_addr == MAP_FAILED) return false;
-            if (auto *new_addr = mremap(reinterpret_cast<void *>(info.start), len, len,
-                                        MREMAP_FIXED | MREMAP_MAYMOVE, backup_addr);
+            if (auto *new_addr = sys_mremap(reinterpret_cast<void *>(info.start), len, len,
+                                            MREMAP_FIXED | MREMAP_MAYMOVE, backup_addr);
                 new_addr == MAP_FAILED || new_addr != backup_addr) {
                 kSkipRemap = true;
                 break;
             }
-            if (auto *new_addr = mmap(reinterpret_cast<void *>(info.start), len,
-                                      PROT_READ | PROT_WRITE | info.perms,
-                                      MAP_PRIVATE | MAP_FIXED | MAP_ANON, -1, 0);
+            if (auto *new_addr = sys_mmap(reinterpret_cast<void *>(info.start), len,
+                                          PROT_READ | PROT_WRITE | info.perms,
+                                          MAP_PRIVATE | MAP_FIXED | MAP_ANON, -1, 0);
                 new_addr == MAP_FAILED) {
                 return false;
             }
-            memcpy(reinterpret_cast<void *>(info.start), backup_addr, len);
+            for (uintptr_t src = reinterpret_cast<uintptr_t>(backup_addr), dest = info.start,
+                           end = info.start + len;
+                 dest < end; src += PAGE_SIZE, dest += PAGE_SIZE) {
+                static_assert(sizeof(PAGE) == PAGE_SIZE);
+                *reinterpret_cast<PAGE *>(dest) = *reinterpret_cast<PAGE *>(src);
+            }
             info.backup = reinterpret_cast<uintptr_t>(backup_addr);
             break;
         }
@@ -281,7 +288,8 @@ inline namespace v2 {
     static_assert(std::numeric_limits<uintptr_t>::min() == 0);
     static_assert(std::numeric_limits<uintptr_t>::max() == -1);
     [[maybe_unused]] const auto &info = register_info.emplace_back(
-        RegisterInfo{dev, inode,
+        RegisterInfo{dev,
+                     inode,
                      {std::numeric_limits<uintptr_t>::min(), std::numeric_limits<uintptr_t>::max()},
                      std::string{symbol},
                      callback,
