@@ -171,8 +171,8 @@ public:
             LOGD("Restore %p from %p", reinterpret_cast<void *>(info.start),
                  reinterpret_cast<void *>(info.backup));
             if (auto *new_addr =
-                    mremap(reinterpret_cast<void *>(info.backup), len, len,
-                           MREMAP_FIXED | MREMAP_MAYMOVE, reinterpret_cast<void *>(info.start));
+                    sys_mremap(reinterpret_cast<void *>(info.backup), len, len,
+                               MREMAP_FIXED | MREMAP_MAYMOVE, reinterpret_cast<void *>(info.start));
                 new_addr == MAP_FAILED || reinterpret_cast<uintptr_t>(new_addr) != info.start) {
                 return false;
             }
