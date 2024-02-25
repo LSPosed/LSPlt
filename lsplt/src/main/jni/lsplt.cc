@@ -242,11 +242,12 @@ HookInfos hook_info;
 
 namespace lsplt {
 inline namespace v2 {
-[[maybe_unused]] std::vector<MapInfo> MapInfo::Scan() {
+[[maybe_unused]] std::vector<MapInfo> MapInfo::Scan(std::string_view pid) {
     constexpr static auto kPermLength = 5;
     constexpr static auto kMapEntry = 7;
     std::vector<MapInfo> info;
-    auto maps = std::unique_ptr<FILE, decltype(&fclose)>{fopen("/proc/self/maps", "r"), &fclose};
+    auto path = "/proc/" + std::string{pid} + "/maps";
+    auto maps = std::unique_ptr<FILE, decltype(&fclose)>{fopen(path.c_str(), "r"), &fclose};
     if (maps) {
         char *line = nullptr;
         size_t len = 0;

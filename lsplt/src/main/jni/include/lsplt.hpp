@@ -37,8 +37,9 @@ struct MapInfo {
 
     /// \brief Scans /proc/self/maps and returns a list of \ref MapInfo entries.
     /// This is useful to find out the inode of the library to hook.
+    /// \param[in] pid The process id to scan. This is "self" by default.
     /// \return A list of \ref MapInfo entries.
-    [[maybe_unused, gnu::visibility("default")]] static std::vector<MapInfo> Scan();
+    [[maybe_unused, gnu::visibility("default")]] static std::vector<MapInfo> Scan(std::string_view pid = "self");
 };
 
 /// \brief Register a hook to a function by inode. For so within an archive, you should use
