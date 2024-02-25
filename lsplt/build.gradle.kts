@@ -13,7 +13,7 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath("org.eclipse.jgit:org.eclipse.jgit:6.4.0.202211300538-r")
+        classpath("org.eclipse.jgit:org.eclipse.jgit:6.8.0.202311291450-r")
     }
 }
 
@@ -46,7 +46,7 @@ android {
         prefab = true
     }
 
-    packagingOptions {
+    packaging {
         jniLibs {
             excludes += "**.so"
         }
@@ -61,6 +61,11 @@ android {
     defaultConfig {
         minSdk = androidMinSdkVersion
         targetSdk = androidTargetSdkVersion
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     buildTypes {
