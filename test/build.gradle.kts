@@ -45,8 +45,8 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     testOptions {
@@ -81,8 +81,9 @@ android {
                 createDevice(30, true)
 //                createDevice(31, false, "android-tv")
                 createDevice(31, true, "aosp_atd")
-                createDevice(32, true, "google_apis")
-                createDevice(33, true, "google_apis")
+                createDevice(32, true, "aosp_atd")
+                createDevice(33, true, "aosp_atd")
+                createDevice(34, true, "aosp_atd")
             }
         }
     }
