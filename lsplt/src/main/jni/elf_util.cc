@@ -21,6 +21,10 @@
 #define ELF_R_GENERIC_JUMP_SLOT R_X86_64_JUMP_SLOT
 #define ELF_R_GENERIC_GLOB_DAT R_X86_64_GLOB_DAT
 #define ELF_R_GENERIC_ABS R_X86_64_64
+#elif defined(__riscv)
+#define ELF_R_GENERIC_JUMP_SLOT R_RISCV_JUMP_SLOT
+#define ELF_R_GENERIC_GLOB_DAT R_RISCV_32_PCREL
+#define ELF_R_GENERIC_ABS R_RISCV_64
 #endif
 
 #if defined(__LP64__)
@@ -81,6 +85,8 @@ Elf::Elf(uintptr_t base_addr) : base_addr_(base_addr) {
     if (EM_386 != header_->e_machine) return;
 #elif defined(__x86_64__)
     if (EM_X86_64 != header_->e_machine) return;
+#elif defined(__riscv)
+    if (EM_RISCV != header_->e_machine) return;
 #else
     return;
 #endif
