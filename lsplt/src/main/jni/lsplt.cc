@@ -15,11 +15,13 @@
 #include "syscall.hpp"
 
 namespace {
+const uintptr_t kPageSize = getpagesize();
 
-inline auto PageStart(uintptr_t addr) { return reinterpret_cast<char *>(((addr)&PAGE_MASK)); }
+inline auto PageStart(uintptr_t addr) {
+    return reinterpret_cast<char *>(addr / kPageSize * kPageSize); }
 
 inline auto PageEnd(uintptr_t addr) {
-    return reinterpret_cast<char *>(reinterpret_cast<uintptr_t>(PageStart(addr)) + PAGE_SIZE);
+    return reinterpret_cast<char *>(reinterpret_cast<uintptr_t>(PageStart(addr)) + kPageSize);
 }
 
 struct RegisterInfo {
@@ -113,7 +115,6 @@ public:
     }
 
     bool DoHook(uintptr_t addr, uintptr_t callback, uintptr_t *backup) {
-        using PAGE = std::array<char, PAGE_SIZE>;
         LOGV("Hooking %p", reinterpret_cast<void *>(addr));
         auto iter = lower_bound(addr);
         if (iter == end()) return false;
@@ -139,9 +140,8 @@ public:
             }
             for (uintptr_t src = reinterpret_cast<uintptr_t>(backup_addr), dest = info.start,
                            end = info.start + len;
-                 dest < end; src += PAGE_SIZE, dest += PAGE_SIZE) {
-                static_assert(sizeof(PAGE) == PAGE_SIZE);
-                *reinterpret_cast<PAGE *>(dest) = *reinterpret_cast<PAGE *>(src);
+                 dest < end; src += kPageSize, dest += kPageSize) {
+                memcpy(reinterpret_cast<void *>(dest), reinterpret_cast<void *>(src), kPageSize);
             }
             info.backup = reinterpret_cast<uintptr_t>(backup_addr);
         }

@@ -101,6 +101,7 @@ android {
                         "-DCMAKE_CXX_FLAGS_RELEASE=$configFlags",
                         "-DCMAKE_C_FLAGS_RELEASE=$configFlags",
                         "-DDEBUG_SYMBOLS_PATH=${project.buildDir.absolutePath}/symbols/$name",
+                        "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
                     )
                     findInPath("ccache")?.let {
                         println("Using ccache $it")
