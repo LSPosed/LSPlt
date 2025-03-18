@@ -18,7 +18,8 @@ namespace {
 const uintptr_t kPageSize = getpagesize();
 
 inline auto PageStart(uintptr_t addr) {
-    return reinterpret_cast<char *>(addr / kPageSize * kPageSize); }
+    return reinterpret_cast<char *>(addr / kPageSize * kPageSize);
+}
 
 inline auto PageEnd(uintptr_t addr) {
     return reinterpret_cast<char *>(reinterpret_cast<uintptr_t>(PageStart(addr)) + kPageSize);
@@ -72,7 +73,7 @@ public:
                 continue;
             }
             auto start = map.start;
-            bool self = map.inode == kSelfInode && map.dev == kSelfDev;
+            const bool self = map.inode == kSelfInode && map.dev == kSelfDev;
             info.emplace(start, HookInfo{{std::move(map)}, {}, 0, nullptr, self});
         }
         return info;
@@ -127,10 +128,16 @@ public:
             auto *backup_addr = sys_mmap(nullptr, len, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
             LOGD("Backup %p to %p", reinterpret_cast<void *>(addr), backup_addr);
             if (backup_addr == MAP_FAILED) return false;
-            if (auto *new_addr = sys_mremap(reinterpret_cast<void *>(info.start), len, len,
-                                            MREMAP_FIXED | MREMAP_MAYMOVE, backup_addr);
+            if (auto *new_addr =
+                    sys_mremap(reinterpret_cast<void *>(info.start), len, len,
+                               MREMAP_FIXED | MREMAP_MAYMOVE | MREMAP_DONTUNMAP, backup_addr);
                 new_addr == MAP_FAILED || new_addr != backup_addr) {
-                return false;
+                new_addr = sys_mremap(reinterpret_cast<void *>(info.start), len, len,
+                           MREMAP_FIXED | MREMAP_MAYMOVE, backup_addr);
+                if (new_addr == MAP_FAILED || new_addr != backup_addr) {
+                    return false;
+                }
+                LOGD("Backup with MREMAP_DONTUNMAP failed, tried without it");
             }
             if (auto *new_addr = sys_mmap(reinterpret_cast<void *>(info.start), len,
                                           PROT_READ | PROT_WRITE | info.perms,
@@ -168,7 +175,8 @@ public:
             LOGD("Restore %p from %p", reinterpret_cast<void *>(info.start),
                  reinterpret_cast<void *>(info.backup));
             // Note that we have to always use sys_mremap here,
-            // see https://cs.android.com/android/_/android/platform/bionic/+/4200e260d266fd0c176e71fbd720d0bab04b02db
+            // see
+            // https://cs.android.com/android/_/android/platform/bionic/+/4200e260d266fd0c176e71fbd720d0bab04b02db
             if (auto *new_addr =
                     sys_mremap(reinterpret_cast<void *>(info.backup), len, len,
                                MREMAP_FIXED | MREMAP_MAYMOVE, reinterpret_cast<void *>(info.start));
@@ -240,8 +248,7 @@ std::list<RegisterInfo> register_info;
 HookInfos hook_info;
 }  // namespace
 
-namespace lsplt {
-inline namespace v2 {
+namespace lsplt::inline v2 {
 [[maybe_unused]] std::vector<MapInfo> MapInfo::Scan(std::string_view pid) {
     constexpr static auto kPermLength = 5;
     constexpr static auto kMapEntry = 7;
@@ -268,9 +275,9 @@ inline namespace v2 {
                 continue;
             }
             while (path_off < read && isspace(line[path_off])) path_off++;
-            auto &ref = info.emplace_back(MapInfo{start, end, 0, perm[3] == 'p', off,
-                                                  static_cast<dev_t>(makedev(dev_major, dev_minor)),
-                                                  inode, line + path_off});
+            auto &ref = info.emplace_back(start, end, 0, perm[3] == 'p', off,
+                                          static_cast<dev_t>(makedev(dev_major, dev_minor)), inode,
+                                          line + path_off);
             if (perm[0] == 'r') ref.perms |= PROT_READ;
             if (perm[1] == 'w') ref.perms |= PROT_WRITE;
             if (perm[2] == 'x') ref.perms |= PROT_EXEC;
@@ -284,16 +291,13 @@ inline namespace v2 {
                                    void **backup) {
     if (dev == 0 || inode == 0 || symbol.empty() || !callback) return false;
 
-    std::unique_lock lock(hook_mutex);
+    const std::unique_lock lock(hook_mutex);
     static_assert(std::numeric_limits<uintptr_t>::min() == 0);
     static_assert(std::numeric_limits<uintptr_t>::max() == -1);
     [[maybe_unused]] const auto &info = register_info.emplace_back(
-        RegisterInfo{dev,
-                     inode,
-                     {std::numeric_limits<uintptr_t>::min(), std::numeric_limits<uintptr_t>::max()},
-                     std::string{symbol},
-                     callback,
-                     backup});
+        dev, inode,
+        std::pair{std::numeric_limits<uintptr_t>::min(), std::numeric_limits<uintptr_t>::max()},
+        std::string{symbol}, callback, backup);
 
     LOGV("RegisterHook %lu %s", info.inode, info.symbol.data());
     return true;
@@ -303,11 +307,11 @@ inline namespace v2 {
                                    std::string_view symbol, void *callback, void **backup) {
     if (dev == 0 || inode == 0 || symbol.empty() || !callback) return false;
 
-    std::unique_lock lock(hook_mutex);
+    const std::unique_lock lock(hook_mutex);
     static_assert(std::numeric_limits<uintptr_t>::min() == 0);
     static_assert(std::numeric_limits<uintptr_t>::max() == -1);
     [[maybe_unused]] const auto &info = register_info.emplace_back(
-        RegisterInfo{dev, inode, {offset, offset + size}, std::string{symbol}, callback, backup});
+        dev, inode, std::pair{offset, offset + size}, std::string{symbol}, callback, backup);
 
     LOGV("RegisterHook %lu %" PRIxPTR "-%" PRIxPTR " %s", info.inode, info.offset_range.first,
          info.offset_range.second, info.symbol.data());
@@ -315,7 +319,7 @@ inline namespace v2 {
 }
 
 [[maybe_unused]] bool CommitHook() {
-    std::unique_lock lock(hook_mutex);
+    const std::unique_lock lock(hook_mutex);
     if (register_info.empty()) return true;
 
     auto new_hook_info = HookInfos::ScanHookInfo();
@@ -331,8 +335,7 @@ inline namespace v2 {
 }
 
 [[gnu::destructor]] [[maybe_unused]] bool InvalidateBackup() {
-    std::unique_lock lock(hook_mutex);
+    const std::unique_lock lock(hook_mutex);
     return hook_info.InvalidateBackup();
 }
-}  // namespace v2
-}  // namespace lsplt
+}  // namespace lsplt::inline v2
